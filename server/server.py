@@ -6,6 +6,9 @@ import sqlite3
 import json
 from typing import Union
 import atexit
+import base64
+from PIL import Image
+import pickle as pkl
 
 app = Flask(__name__)
 app.secret_key = urandom(32)
@@ -18,7 +21,10 @@ CREATE TABLE IF NOT EXISTS users (
     ID INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL,
     passwordHash TEXT NOT NULL,
-    email TEXT NOT NULL
+    email TEXT NOT NULL,
+    profilePicB64 TEXT,
+    premium BOOLEAN DEFAULT FALSE NOT NULL,
+    UNIQUE(username)
 );
 ''')
 
@@ -27,13 +33,12 @@ CREATE TABLE IF NOT EXISTS Games (
     ID INTEGER PRIMARY KEY AUTOINCREMENT,
     PLAYERS INTEGER[] NOT NULL,
     ROUND_MAX INTEGER NOT NULL,
-    SENTENCES TEXT[] NOT NULL,
+    SENTENCES BLOB NOT NULL,
     DONE_PLAYERS BOOLEAN[] NOT NULL,
     ROUND_N INTEGER NOT NULL,
     DONE BOOLEAN NOT NULL,
     ROOM INTEGER NOT NULL,
 
-    FOREIGN KEY (PLAYERS) REFERENCES users(ID),
     FOREIGN KEY (ROOM) REFERENCES rooms(ID)
 );
 ''')
@@ -51,63 +56,118 @@ CREATE TABLE IF NOT EXISTS Room (
     ROUND_MAX INTEGER NOT NULL,
 
     FOREIGN KEY (OWNER) REFERENCES users(ID),
-    FOREIGN KEY (PLAYERS) REFERENCES users(ID),
-    FOREIGN KEY (GAME) REFERENCES games(ID) ON DELETE CASCADE
+    FOREIGN KEY (GAME) REFERENCES games(ID) ON DELETE CASCADE,
+    UNIQUE(NAME)
 );
 ''')
 
 
-@app.route('/db/login/<username>/<passwordHash>', methods=['GET'])
+@app.route('/user/login/<username>/<passwordHash>', methods=['GET'])
 def login(username: str, passwordHash: str):
     cursor = db.cursor()
     cursor.execute(
         'SELECT * FROM users WHERE username=? AND passwordHash=?', (username, passwordHash))
-    if (x := cursor.fetchone()) is not None:
-        return json.dumps({'success': True, 'id': x[0]})
-    return json.dumps({'success': False, 'id': -1})
+    if (user := cursor.fetchone()) is not None:
+        print("User logged in")
+        return json.dumps({'success': True, 'username': user[1], 'email': user[3], 'id': user[0], 'passwordHash': user[2], 'profilePicB64': user[4], 'premium': user[5]})
+    return json.dumps({'success': False, 'id': -1, 'username': '', 'email': '', 'passwordHash': '', 'profilePicB64': '', 'premium': False})
 
 
-@app.route('/db/register/<username>/<passwordHash>/<email>', methods=['GET'])
-def register(username: str, passwordHash: str, email: str):
+@app.route('/user/register/<username>/<passwordHash>/<email>/<premium>', methods=['GET'])
+def register(username: str, passwordHash: str, email: str, premium: str):
     cursor = db.cursor()
     cursor.execute(
-        'INSERT INTO users (username, passwordHash, email) VALUES (?, ?, ?)', (username, passwordHash, email))
+        'INSERT INTO users (username, passwordHash, email, premium) VALUES (?, ?, ?, ?)', (
+            username, passwordHash, email, premium.lower() == "true"))
     db.commit()
     return json.dumps({'success': True, 'id': cursor.lastrowid})
 
 
-@app.route('/db/getUser/<int:id>', methods=['GET'])
-def getUser(id: int):
+@ app.route('/user/register/<username>/<passwordHash>/<email>/<premium>', methods=['POST'])
+def registerPost(username: str, passwordHash: str, email: str, premium):
+    # get the image data from the request
+    data = request.files['image']
+
+    # convert the image data to base64
+    img = data.read()
+    imgB64 = base64.b64encode(img).decode('utf-8')
+
+    cursor = db.cursor()
+    # first check if the username is already taken
+    cursor.execute('SELECT * FROM users WHERE username=?', (username,))
+    if cursor.fetchone() is not None:
+        return json.dumps({'success': False, 'id': -1})
+
+    cursor.execute(
+        'INSERT INTO users (username, passwordHash, email, profilePicB64, premium) VALUES (?, ?, ?, ?, ?)', (username, passwordHash, email, imgB64, premium.lower() == "true"))
+    db.commit()
+    return json.dumps({'success': True, 'id': cursor.lastrowid})
+
+
+@ app.route('/user/makePremium/<int:id>', methods=['GET'])
+def makePremium(id: int):
+    cursor = db.cursor()
+    cursor.execute('UPDATE users SET premium=TRUE WHERE ID=?', (id,))
+    db.commit()
+    return json.dumps({'success': True, 'id': id})
+
+
+@ app.route('/user/getUserByID/<int:id>', methods=['GET'])
+def getUserByID(id: int):
     cursor = db.cursor()
     cursor.execute('SELECT * FROM users WHERE ID=?', (id,))
     user = cursor.fetchone()
     if user is not None:
-        return json.dumps({'success': True, 'username': user[1], 'email': user[3], 'id': user[0], 'passwordHash': user[2]})
-    return json.dumps({'success': False, 'id': -1})
+        return json.dumps({'success': True, 'username': user[1], 'email': user[3], 'id': user[0], 'passwordHash': user[2], 'profilePicB64': user[4], 'premium': user[5]})
+    return json.dumps({'success': False, 'id': -1, 'username': '', 'email': '', 'passwordHash': '', 'profilePicB64': '', 'premium': False})
+
+
+@ app.route('/user/getUsers', methods=['GET'])
+def getUsers():
+    cursor = db.cursor()
+    users = cursor.execute('SELECT * FROM users').fetchall()
+    usersJson = []
+    for user in users:
+        usersJson.append({'success': True, 'username': user[1], 'email': user[3], 'id': user[0],
+                         'passwordHash': user[2], 'profilePicB64': user[4], 'premium': user[5]})
+    return json.dumps(usersJson)
+
+
+@ app.route('/user/getUserByUsername/<username>', methods=['GET'])
+def getUserByUsername(username: str):
+    cursor = db.cursor()
+    cursor.execute('SELECT * FROM users WHERE username=?', (username,))
+    user = cursor.fetchone()
+    if user is not None:
+        return json.dumps({'success': True, 'username': user[1], 'email': user[3], 'id': user[0], 'passwordHash': user[2], 'profilePicB64': user[4], 'premium': user[5]})
+    return json.dumps({'success': False, 'id': -1, 'username': '', 'email': '', 'passwordHash': '', 'profilePicB64': '', 'premium': False})
 
 
 def fromBoolStr(s: str) -> bool:
     return s.lower() == 'true'
 
 
+def strWithQuotes(s: str) -> str:
+    return f"'{s}'"
+
+
 class Game:
-    def __init__(self, id: int, players: str, round_max: int, sentences: str = "ARRAY[]", donePlayers: str = "ARRAY[]", roundNumber: int = 0, done: bool = False, roomId: int = -1):
+    def __init__(self, id: int, players: str, round_max: int, sentences: Union[bytes, None] = None, donePlayers: str = "ARRAY[]", roundNumber: int = 0, done: bool = False, roomID: int = -1):
         self.id = id
         self.players = list(map(int, players[6:-1].split(',')))
         self.roundMax = round_max
-        self.sentences = list(map(str, [s.strip()
-                              for s in sentences[6:-1].split(',')]))
+        self.sentences = [] if sentences is None else pkl.loads(sentences)
         self.donePlayers = list(
             map(fromBoolStr, [s.strip() for s in donePlayers[6:-1].split(',')]))
         self.roundNumber = roundNumber
         self.done = done
-        self.roomId = roomId
+        self.roomID = roomID
 
     def addSentence(self, player: int, sentence: str):
         playerIndex = self.players.index(player)
         if self.donePlayers[playerIndex]:
             return
-        self.sentences[playerIndex] += sentence
+        self.sentences[playerIndex] += " " + sentence.strip()
         self.donePlayers[playerIndex] = True
 
     def isDone(self):
@@ -136,7 +196,7 @@ class Game:
             'donePlayers': self.donePlayers,
             'roundNumber': self.roundNumber,
             'done': self.done,
-            'roomId': self.roomId
+            'roomID': self.roomID
         }
 
     def update(self):
@@ -146,7 +206,7 @@ class Game:
                        ''', (
             f"ARRAY[{','.join(map(str, self.players))}]",
             self.roundMax,
-            f"ARRAY[{','.join(map(str, [self.sentences[i] for i in range(len(self.players))]))}]",
+            pkl.dumps(self.sentences),
             f"ARRAY[{','.join(map(str, [self.donePlayers[i] for i in range(len(self.players))]))}]",
             self.roundNumber, self.done, self.id
         ))
@@ -175,6 +235,7 @@ class Room:
                 'gameID': self.gameID,
                 'readyPlayers': self.readyPlayers,
                 'roundMax': self.roundMax,
+                'usesPassword': self.password is not None,
                 'game': None
             }
         else:
@@ -190,6 +251,7 @@ class Room:
                 'gameID': self.gameID,
                 'readyPlayers': self.readyPlayers,
                 'roundMax': self.roundMax,
+                'usesPassword': self.password is not None,
                 'game': game.toJson()
             }
 
@@ -202,7 +264,7 @@ class Room:
                        ''', (
             f"ARRAY[{','.join(map(str, self.players))}]",
             self.roundMax,
-            f"ARRAY[{','.join(map(str, ['' for _ in self.players]))}]",
+            pkl.dumps(['' for _ in self.players]),
             f"ARRAY[{','.join(map(str, [False for _ in self.players]))}]",
             0,
             False,
@@ -228,15 +290,14 @@ class Room:
         db.commit()
 
 
-@app.route('/rooms/createRoom/<int:owner>/<name>/<password>', methods=['GET'])
-def createRoomPwd(owner: int, name: str, password: str):
+@ app.route('/rooms/createRoom/<int:owner>/<name>/<int:roundNumber>/<password>', methods=['GET'])
+def createRoomPwd(owner: int, name: str, password: str, roundNumber: int):
     cursor = db.cursor()
 
     cursor.execute('INSERT INTO Room (NAME, OWNER, PASSWORD, PLAYERS, READY_PLAYERS, ROUND_MAX) VALUES (?, ?, ?, ?, ?, ?)',
-                   (name, owner, password, f"ARRAY[{owner}]", f"ARRAY[False]", 8))
+                   (name, owner, password, f"ARRAY[{owner}]", f"ARRAY[False]", roundNumber))
 
-    cursor.execute('SELECT * FROM Room WHERE NAME=? AND OWNER=? AND PASSWORD=? AND PLAYERS=? AND READY_PLAYERS=? AND ROUND_MAX=?',
-                   (name, owner, password, f"ARRAY[{owner}]", f"ARRAY[False]", 8))
+    cursor.execute('SELECT * FROM Room WHERE ID=?', (cursor.lastrowid,))
     roomTxt = cursor.fetchone()
     room = Room(*roomTxt)
 
@@ -245,15 +306,14 @@ def createRoomPwd(owner: int, name: str, password: str):
     return json.dumps({'success': True, 'room': room.toJson()})
 
 
-@app.route('/rooms/createRoom/<int:owner>/<name>', methods=['GET'])
-def createRoomNoPwd(owner: int, name: str):
+@ app.route('/rooms/createRoom/<int:owner>/<name>/<int:roundNumber>', methods=['GET'])
+def createRoomNoPwd(owner: int, name: str, roundNumber: int):
     cursor = db.cursor()
 
     cursor.execute('INSERT INTO Room (NAME, OWNER, PLAYERS, READY_PLAYERS, ROUND_MAX) VALUES (?, ?, ?, ?, ?)',
-                   (name, owner, f"ARRAY[{owner}]", f"ARRAY[False]", 8))
+                   (name, owner, f"ARRAY[{owner}]", f"ARRAY[False]", roundNumber))
 
-    cursor.execute('SELECT * FROM Room WHERE NAME=? AND OWNER=? AND PLAYERS=? AND READY_PLAYERS=? AND ROUND_MAX=?',
-                   (name, owner, f"ARRAY[{owner}]", f"ARRAY[False]", 8))
+    cursor.execute('SELECT * FROM Room WHERE ID=?', (cursor.lastrowid,))
     roomTxt = cursor.fetchone()
     room = Room(*roomTxt)
 
@@ -262,7 +322,7 @@ def createRoomNoPwd(owner: int, name: str):
     return json.dumps({'success': True, 'room': room.toJson()})
 
 
-@app.route('/rooms/getRoom/<int:id>', methods=['GET'])
+@ app.route('/rooms/getRoom/<int:id>', methods=['GET'])
 def getRoom(id: int):
     cursor = db.cursor()
     rooms = cursor.execute('SELECT * FROM Room').fetchall()
@@ -273,26 +333,26 @@ def getRoom(id: int):
     return json.dumps({'success': False, 'room': None})
 
 
-@app.route('/rooms/getRooms', methods=['GET'])
+@ app.route('/rooms/getRooms', methods=['GET'])
 def getRooms():
     cursor = db.cursor()
     roomsRaw = cursor.execute('SELECT * FROM Room').fetchall()
     rooms: list[dict] = []
     for roomStr in roomsRaw:
-        roomTxt = roomStr[1]
+        roomTxt = roomStr
         room = Room(*roomTxt)
 
         rooms.append(room.toJson())
     return json.dumps({'success': True, 'rooms': rooms})
 
 
-@app.route('/rooms/joinRoom/<int:player>/<int:roomId>/<password>', methods=['GET'])
-def joinRoomPwd(player: int, roomId: int, password: str):
+@ app.route('/rooms/joinRoom/<int:player>/<int:roomID>/<password>', methods=['GET'])
+def joinRoomPwd(player: int, roomID: int, password: str):
     cursor = db.cursor()
     rooms = cursor.execute('SELECT * FROM Room').fetchall()
     for roomStr in rooms:
         room = Room(*roomStr)
-        if room.id == roomId:
+        if room.id == roomID:
             if room.password is not None and room.password == password and player not in room.players:
                 room.players.append(player)
                 room.readyPlayers.append(False)
@@ -303,13 +363,13 @@ def joinRoomPwd(player: int, roomId: int, password: str):
     return json.dumps({'success': False, 'room': None})
 
 
-@app.route('/rooms/joinRoom/<int:player>/<int:roomId>', methods=['GET'])
-def joinRoomNoPwd(player: int, roomId: int):
+@ app.route('/rooms/joinRoom/<int:player>/<int:roomID>', methods=['GET'])
+def joinRoomNoPwd(player: int, roomID: int):
     cursor = db.cursor()
     rooms = cursor.execute('SELECT * FROM Room').fetchall()
     for roomStr in rooms:
         room = Room(*roomStr)
-        if room.id == roomId and room.password is None:
+        if room.id == roomID and room.password is None:
             room.players.append(player)
             room.readyPlayers.append(False)
             room.update()
@@ -317,14 +377,16 @@ def joinRoomNoPwd(player: int, roomId: int):
     return json.dumps({'success': False, 'room': None})
 
 
-@app.route('/rooms/leaveRoom/<int:player>/<int:roomId>', methods=['GET'])
-def leaveRoom(player: int, roomId: int):
+@ app.route('/rooms/leaveRoom/<int:player>/<int:roomID>', methods=['GET'])
+def leaveRoom(player: int, roomID: int):
     cursor = db.cursor()
     rooms = cursor.execute('SELECT * FROM Room').fetchall()
     for roomStr in rooms:
         room = Room(*roomStr)
-        if room.id == roomId:
+        if room.id == roomID:
+            playerIndex = room.players.index(player)
             room.players.remove(player)
+            room.readyPlayers.pop(playerIndex)
             if len(room.players) == 0:
                 cursor.execute('DELETE FROM Room WHERE ID=?', (room.id,))
                 return json.dumps({'success': True, 'room': None})
@@ -334,15 +396,15 @@ def leaveRoom(player: int, roomId: int):
     return json.dumps({'success': False, 'room': None})
 
 
-@app.route('/rooms/ready/<int:player>/<int:roomId>', methods=['GET'])
-def ready(player: int, roomId: int):
+@ app.route('/rooms/ready/<int:player>/<int:roomID>', methods=['GET'])
+def ready(player: int, roomID: int):
     cursor = db.cursor()
     rooms = cursor.execute('SELECT * FROM Room').fetchall()
     for roomStr in rooms:
         room = Room(*roomStr)
-        if room.id == roomId:
+        if room.id == roomID:
             playerIndex = room.players.index(player)
-            room.readyPlayers[playerIndex] = True
+            room.readyPlayers[playerIndex] = not room.readyPlayers[playerIndex]
             if all(room.readyPlayers):
                 room.startGame()
             room.update()
@@ -350,16 +412,32 @@ def ready(player: int, roomId: int):
     return json.dumps({'success': False, 'room': None})
 
 
-@app.route('/rooms/addSentence/<int:player>/<int:roomId>/<sentence>', methods=['GET'])
-def addSentence(player: int, roomId: int, sentence: str):
+@app.route('/rooms/readyAnonymous/<int:roomID>/<int:offset>', methods=['GET'])
+def readyAnonymous(roomID: int, offset: int):
     cursor = db.cursor()
     rooms = cursor.execute('SELECT * FROM Room').fetchall()
     for roomStr in rooms:
         room = Room(*roomStr)
-        if room.id == roomId and room.gameID is not None and player in room.players:
+        if room.id == roomID:
+            room.readyPlayers[offset] = not room.readyPlayers[offset]
+            if all(room.readyPlayers):
+                room.startGame()
+            room.update()
+            return json.dumps({'success': True, 'room': room.toJson()})
+    return json.dumps({'success': False, 'room': None})
+
+
+@ app.route('/rooms/addSentence/<int:player>/<int:roomID>/<sentence>', methods=['GET'])
+def addSentence(player: int, roomID: int, sentence: str):
+    cursor = db.cursor()
+    rooms = cursor.execute('SELECT * FROM Room').fetchall()
+    for roomStr in rooms:
+        room = Room(*roomStr)
+        if room.id == roomID and room.gameID is not None and player in room.players:
             gameStr = cursor.execute(
                 'SELECT * FROM Games WHERE ID=?', (room.gameID,)).fetchone()
             game = Game(*gameStr)
+            print("Adding sentence: ", sentence)
             game.addSentence(player, sentence)
             game.tick()
 
@@ -369,7 +447,7 @@ def addSentence(player: int, roomId: int, sentence: str):
     return json.dumps({'success': False, 'room': None})
 
 
-@app.route('/rooms/clearRooms', methods=['GET'])
+@ app.route('/rooms/clearRooms', methods=['GET'])
 def clearRooms():
     cursor = db.cursor()
     cursor.execute('DELETE FROM Room')

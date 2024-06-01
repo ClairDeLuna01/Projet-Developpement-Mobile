@@ -4,120 +4,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using System;
 using Defective.JSON;
-
-[System.Serializable]
-public class GameParameters
-{
-    int roundNumber;
-
-    public static GameParameters CreateFromJSON(string jsonString)
-    {
-        JSONObject obj = new(jsonString);
-        GameParameters parameters = new()
-        {
-            roundNumber = obj["roundNumber"].intValue
-        };
-        return parameters;
-    }
-}
-
-[System.Serializable]
-public class Game
-{
-    public List<int> players;
-    public GameParameters parameters;
-    public List<string> sentences;
-    public List<bool> donePlayers;
-    public int roundNumber;
-    public bool done;
-
-    public static Game CreateFromJSON(string jsonString)
-    {
-        if (jsonString == "null")
-        {
-            return null;
-        }
-        JSONObject obj = new(jsonString);
-        Game game = new()
-        {
-            players = new List<int>()
-        };
-        foreach (JSONObject player in obj["players"].list)
-        {
-            game.players.Add(player.intValue);
-        }
-        game.parameters = GameParameters.CreateFromJSON(obj["parameters"].ToString());
-        game.sentences = new List<string>();
-        foreach (JSONObject sentence in obj["sentences"].list)
-        {
-            game.sentences.Add(sentence.stringValue);
-        }
-        game.donePlayers = new List<bool>();
-        foreach (JSONObject donePlayer in obj["donePlayers"].list)
-        {
-            game.donePlayers.Add(donePlayer.boolValue);
-        }
-        game.roundNumber = obj["roundNumber"].intValue;
-        game.done = obj["done"].boolValue;
-        return game;
-    }
-}
-
-[System.Serializable]
-public class RoomInfoJson
-{
-    public int id;
-    public string name;
-    public string owner;
-    public List<int> players;
-    public Game game;
-    public List<bool> readyPlayers;
-
-    public static RoomInfoJson CreateFromJSON(string jsonString)
-    {
-        if (jsonString == "null")
-        {
-            return null;
-        }
-        JSONObject obj = new(jsonString);
-        RoomInfoJson room = new()
-        {
-            id = obj["id"].intValue,
-            name = obj["name"].stringValue,
-            owner = obj["owner"].stringValue,
-            players = new List<int>()
-        };
-        foreach (JSONObject player in obj["players"].list)
-        {
-            room.players.Add(player.intValue);
-        }
-        room.game = Game.CreateFromJSON(obj["game"].ToString());
-        room.readyPlayers = new List<bool>();
-        foreach (JSONObject readyPlayer in obj["readyPlayers"].list)
-        {
-            room.readyPlayers.Add(readyPlayer.boolValue);
-        }
-        return room;
-    }
-}
-
-[System.Serializable]
-public class RoomInfoJsonReq
-{
-    public bool success;
-    public RoomInfoJson room;
-
-    public static RoomInfoJsonReq CreateFromJSON(string jsonString)
-    {
-        JSONObject obj = new(jsonString);
-        RoomInfoJsonReq roomReq = new()
-        {
-            success = obj["success"].boolValue,
-            room = RoomInfoJson.CreateFromJSON(obj["room"].ToString())
-        };
-        return roomReq;
-    }
-}
+using UnityEngine.UI;
 
 [System.Serializable]
 public class User
@@ -126,315 +13,182 @@ public class User
     public string username;
     public string email;
     public string passwordHash;
+    public Texture2D profilePicture;
+    public Sprite profilePictureSprite;
+    public bool premium;
 
-    public static User CreateFromJSON(string jsonString)
+    public static User AnonymousUser;
+
+    public User(int id, string username, string email, string passwordHash, string profilePictureB64, bool premium)
     {
-        if (jsonString == "null")
-        {
-            return null;
-        }
-        JSONObject obj = new(jsonString);
-        User user = new()
-        {
-            id = obj["id"].intValue,
-            username = obj["username"].stringValue,
-            email = obj["email"].stringValue,
-            passwordHash = obj["passwordHash"].stringValue
-        };
-        return user;
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.premium = premium;
+
+        byte[] profilePicBytes = Convert.FromBase64String(profilePictureB64);
+
+        profilePicture = new Texture2D(1, 1);
+        profilePicture.LoadImage(profilePicBytes);
+
+        Rect rec = new Rect(0, 0, profilePicture.width, profilePicture.height);
+        profilePictureSprite = Sprite.Create(profilePicture, rec, new Vector2(0.5f, 0.5f), 100);
     }
-}
 
-[System.Serializable]
-public class RoomListJsonReq
-{
-    public bool success;
-    public List<RoomInfoJson> rooms;
-
-    public static RoomListJsonReq CreateFromJSON(string jsonString)
+    public User(int id, string username, string email, string passwordHash, Texture2D profilePicture, bool premium)
     {
-        JSONObject obj = new(jsonString);
-        RoomListJsonReq roomListReq = new()
-        {
-            success = obj["success"].boolValue,
-            rooms = new List<RoomInfoJson>()
-        };
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.premium = premium;
 
-        foreach (JSONObject room in obj["rooms"].list)
-        {
-            roomListReq.rooms.Add(RoomInfoJson.CreateFromJSON(room.ToString()));
-        }
-        return roomListReq;
+        this.profilePicture = profilePicture;
+
+        Rect rec = new Rect(0, 0, profilePicture.width, profilePicture.height);
+        profilePictureSprite = Sprite.Create(profilePicture, rec, new Vector2(0.5f, 0.5f), 100);
+    }
+
+    public User(int id, string username, string email, string passwordHash, bool premium)
+    {
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.premium = premium;
+
+        profilePicture = Resources.Load<Texture2D>("defaultPP");
+
+        Rect rec = new Rect(0, 0, profilePicture.width, profilePicture.height);
+        profilePictureSprite = Sprite.Create(profilePicture, rec, new Vector2(0.5f, 0.5f), 100);
+    }
+
+    public static User FromJsonUserInfo(JSONUserInfo info)
+    {
+        if (info.profilePictureB64 == null)
+            return new User(info.id, info.username, info.email, info.passwordHash, info.premium);
+        else
+            return new User(info.id, info.username, info.email, info.passwordHash, info.profilePictureB64, info.premium);
     }
 }
 
 
 public class GameManager : MonoBehaviour
 {
-    private const string roomListURL = "https://clairdeluna.pythonanywhere.com/rooms";
+    public static string serverURL = "https://clairdeluna.pythonanywhere.com";
+    public static string serverRoomsURL = $"{serverURL}/rooms";
 
-    public User user;
-    public RoomInfoJson roomInfo;
 
-    public GameObject canvas;
-    public GameObject roomListItemPrefab;
+    public static User user = User.AnonymousUser;
+    static public JSONRoomInfo roomInfo;
 
-    public List<RoomInfoJson> roomsDisplay;
-
-    enum GameState
+    public enum GameState
     {
         BROWSING,
+        CREATE_ROOM,
         IN_ROOM,
-        IN_GAME
+        IN_GAME,
+        GAME_OVER,
+        LOGIN,
+        REGISTER
     }
-    GameState state = GameState.BROWSING;
+    static GameState state;
 
-    public void CreateRoom()
+    public static GameObject browsePanel;
+    public static GameObject createRoomPanel;
+    public static GameObject roomPanel;
+    public static GameObject gamePanel;
+    public static GameObject gameOverPanel;
+    public static GameObject loginPanel;
+    public static GameObject registerPanel;
+
+    public static GameManager instance;
+
+    public GameObject browsePanelObj;
+    public GameObject createRoomPanelObj;
+    public GameObject roomPanelObj;
+    public GameObject gamePanelObj;
+    public GameObject gameOverPanelObj;
+    public GameObject loginPanelObj;
+    public GameObject registerPanelObj;
+
+    public static Canvas canvas;
+    public static RectTransform canvasRect;
+    public static CanvasScaler canvasScaler;
+    public Canvas canvasObj;
+
+    public static int anonymousUserPosition = -1;
+
+    public static void ChangeGameState(GameState newState)
     {
-        StartCoroutine(CreateRoomCoroutine());
-    }
+        Debug.Log("Changing game state");
+        state = newState;
+        browsePanel.SetActive(false);
+        createRoomPanel.SetActive(false);
+        roomPanel.SetActive(false);
+        gamePanel.SetActive(false);
+        gameOverPanel.SetActive(false);
+        loginPanel.SetActive(false);
+        registerPanel.SetActive(false);
 
-    public void LeaveRoom()
-    {
-        StartCoroutine(LeaveRoomCoroutine());
-    }
-
-    public void JoinRoom(int roomID, string password = "")
-    {
-        StartCoroutine(JoinRoomCoroutine(roomID, password));
-    }
-
-    IEnumerator CreateRoomCoroutine(string roomName = "Room1")
-    {
-        string url = $"{roomListURL}/createRoom/{user.id}/roomName";
-        using UnityWebRequest webRequest = UnityWebRequest.Get(url);
-        yield return webRequest.SendWebRequest();
-
-        if (webRequest.result == UnityWebRequest.Result.ConnectionError)
+        switch (state)
         {
-            Debug.Log("Error: " + webRequest.error);
-        }
-        else
-        {
-            Debug.Log("Received: " + webRequest.downloadHandler.text);
-            RoomInfoJsonReq resp = RoomInfoJsonReq.CreateFromJSON(webRequest.downloadHandler.text);
-            if (resp.success)
-            {
-                Debug.Log("Room: " + resp.room.name);
-                Debug.Log("Owner: " + resp.room.owner);
-                Debug.Log("Players: " + resp.room.players);
-                roomInfo = resp.room;
-            }
-            else
-            {
-                Debug.Log("Failed to create room");
-            }
+            case GameState.BROWSING:
+                browsePanel.SetActive(true);
+                break;
+            case GameState.CREATE_ROOM:
+                createRoomPanel.SetActive(true);
+                break;
+            case GameState.IN_ROOM:
+                roomPanel.SetActive(true);
+                break;
+            case GameState.IN_GAME:
+                gamePanel.SetActive(true);
+                break;
+            case GameState.GAME_OVER:
+                gameOverPanel.SetActive(true);
+                break;
+            case GameState.LOGIN:
+                loginPanel.SetActive(true);
+                break;
+            case GameState.REGISTER:
+                registerPanel.SetActive(true);
+                break;
         }
     }
-
-    IEnumerator LeaveRoomCoroutine()
-    {
-        if (roomInfo.id == 0)
-        {
-            Debug.Log("No room to leave");
-            yield break;
-        }
-        string url = $"{roomListURL}/leaveRoom/{user.id}/{roomInfo.id}";
-        using UnityWebRequest webRequest = UnityWebRequest.Get(url);
-        yield return webRequest.SendWebRequest();
-
-        if (webRequest.result == UnityWebRequest.Result.ConnectionError)
-        {
-            Debug.Log("Error: " + webRequest.error);
-        }
-        else
-        {
-            Debug.Log("Received: " + webRequest.downloadHandler.text);
-            RoomInfoJsonReq resp = RoomInfoJsonReq.CreateFromJSON(webRequest.downloadHandler.text);
-            if (resp.success)
-            {
-                Debug.Log("Room: " + resp.room.name);
-                Debug.Log("Owner: " + resp.room.owner);
-                Debug.Log("Players: " + resp.room.players);
-                roomInfo = null;
-            }
-            else
-            {
-                Debug.Log("Failed to leave room"); // 😰
-            }
-        }
-    }
-
-    IEnumerator JoinRoomCoroutine(int roomID, string password = "")
-    {
-        RoomInfoJson roomInfoQuery = null;
-        yield return GetRoomInfoCoroutine(roomID, (room) => roomInfoQuery = room);
-
-        if (roomInfoQuery == null)
-        {
-            Debug.Log("Room not found");
-            yield break;
-        }
-
-        string url;
-        if (password == "")
-        {
-            url = $"{roomListURL}/joinRoom/{user.id}/{roomInfoQuery.id}";
-        }
-        else
-        {
-            url = $"{roomListURL}/joinRoom/{user.id}/{roomInfoQuery.id}/{password}";
-        }
-
-        using UnityWebRequest webRequest = UnityWebRequest.Get(url);
-        yield return webRequest.SendWebRequest();
-
-        if (webRequest.result == UnityWebRequest.Result.ConnectionError)
-        {
-            Debug.Log("Error: " + webRequest.error);
-        }
-        else
-        {
-            Debug.Log("Received: " + webRequest.downloadHandler.text);
-            RoomInfoJsonReq resp = RoomInfoJsonReq.CreateFromJSON(webRequest.downloadHandler.text);
-            if (resp.success)
-            {
-                Debug.Log("Room: " + resp.room.name);
-                Debug.Log("Owner: " + resp.room.owner);
-                Debug.Log("Players: " + resp.room.players);
-                roomInfo = resp.room;
-            }
-            else
-            {
-                Debug.Log("Failed to join room"); // 😰
-            }
-        }
-    }
-
-    IEnumerator GetRoomInfoCoroutine(int roomID, Action<RoomInfoJson> callback)
-    {
-        string url = $"{roomListURL}/getRoom/{roomID}";
-        using UnityWebRequest webRequest = UnityWebRequest.Get(url);
-        yield return webRequest.SendWebRequest();
-
-        if (webRequest.result == UnityWebRequest.Result.ConnectionError)
-        {
-            Debug.Log("Error: " + webRequest.error);
-        }
-        else
-        {
-            Debug.Log("Received: " + webRequest.downloadHandler.text);
-            RoomInfoJsonReq resp = RoomInfoJsonReq.CreateFromJSON(webRequest.downloadHandler.text);
-            if (resp.success)
-            {
-                Debug.Log("Room: " + resp.room.name);
-                Debug.Log("Owner: " + resp.room.owner);
-                Debug.Log("Players: " + resp.room.players);
-                roomInfo = resp.room;
-                callback(roomInfo);
-            }
-            else
-            {
-                Debug.Log("Failed to get room info"); // 😰
-            }
-        }
-    }
-
-    IEnumerator GetRoomListCoroutine(Action<List<RoomInfoJson>> callback)
-    {
-        string url = $"{roomListURL}/getRooms";
-        using UnityWebRequest webRequest = UnityWebRequest.Get(url);
-        yield return webRequest.SendWebRequest();
-
-        if (webRequest.result == UnityWebRequest.Result.ConnectionError)
-        {
-            Debug.Log("Error: " + webRequest.error);
-        }
-        else
-        {
-            Debug.Log("Received: " + webRequest.downloadHandler.text);
-            RoomListJsonReq resp = RoomListJsonReq.CreateFromJSON(webRequest.downloadHandler.text);
-            if (resp.success)
-            {
-                Debug.Log("Rooms: " + resp.rooms);
-                Debug.Log("Rooms.size: " + resp.rooms.Count);
-                callback(resp.rooms);
-            }
-            else
-            {
-                Debug.Log("Failed to get room list"); // 😰
-            }
-        }
-    }
-
-    IEnumerator UpdateRoomsDisplayCoroutine()
-    {
-        List<RoomInfoJson> rooms = null;
-        yield return GetRoomListCoroutine((roomList) => rooms = roomList);
-
-        Debug.Log("Rooms: " + rooms);
-        Debug.Log("Rooms.size: " + rooms.Count);
-        roomsDisplay = rooms;
-
-        if (rooms == null)
-        {
-            Debug.Log("No rooms found");
-            yield break;
-        }
-
-        foreach (Transform child in canvas.transform)
-        {
-            if (child.CompareTag("RoomInfoPrefab"))
-                Destroy(child.gameObject);
-        }
-
-        int i = 0;
-        foreach (RoomInfoJson room in rooms)
-        {
-            Debug.Log("Room: " + room.name);
-            int offset = -i * 130;
-            GameObject roomListItem = Instantiate(roomListItemPrefab, canvas.transform);
-            roomListItem.GetComponent<RoomInfoDisplay>().UpdateRoomInfo(room);
-            roomListItem.GetComponent<RectTransform>().anchoredPosition = new Vector2(0, offset);
-
-            i++;
-        }
-    }
-
-    IEnumerator UpdateDisplayLoop()
-    {
-        while (true)
-        {
-            if (state == GameState.BROWSING)
-            {
-                StartCoroutine(UpdateRoomsDisplayCoroutine());
-                yield return new WaitForSeconds(5);
-            }
-        }
-    }
-
-    public bool updateDisplay = true;
-
 
     // Start is called before the first frame update
     void Start()
     {
-        // temporary
-        user = new User
-        {
-            id = 1,
-            username = "user1",
-            email = "test@mail.com",
-            passwordHash = "password"
-        };
+        browsePanel = browsePanelObj;
+        createRoomPanel = createRoomPanelObj;
+        roomPanel = roomPanelObj;
+        gamePanel = gamePanelObj;
+        gameOverPanel = gameOverPanelObj;
+        loginPanel = loginPanelObj;
+        registerPanel = registerPanelObj;
+        canvas = canvasObj;
+        canvasRect = canvasObj.GetComponent<RectTransform>();
+        canvasScaler = canvasObj.GetComponent<CanvasScaler>();
 
-        if (updateDisplay)
-            StartCoroutine(UpdateDisplayLoop());
+        user = User.AnonymousUser;
+
+        ChangeGameState(GameState.BROWSING);
     }
 
-    // Update is called once per frame
-    void Update()
+    void Awake()
     {
+        if (instance == null)
+        {
+            instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
 
+        User.AnonymousUser = new User(0, "Anonymous", "Anonymous", "Anonymous", false);
     }
 }
